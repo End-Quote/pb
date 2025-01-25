@@ -5,51 +5,45 @@
         constructor() {
             this.baseUrl = "https://api.developer.muso.ai/v4";
             this.apiKey = 'YuH6GPw20q9aEn6quciEQ9iPFalcacHP85vWDqH7';
-            this.headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "x-api-key": this.apiKey
-            };
+        }
+
+        loadScript(url) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                const callbackName = 'musoCallback_' + Math.random().toString(36).substr(2, 9);
+                
+                window[callbackName] = (data) => {
+                    delete window[callbackName];
+                    document.head.removeChild(script);
+                    resolve(data);
+                };
+
+                script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callbackName;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
         }
 
         async search(keyword, type) {
-            const response = await fetch(`${this.baseUrl}/search`, {
-                method: 'POST',
-                headers: this.headers,
-                body: JSON.stringify({
-                    keyword,
-                    type: [type],
-                    limit: 1
-                })
-            });
-            return response.json();
+            const params = encodeURIComponent(JSON.stringify({
+                keyword,
+                type: [type],
+                limit: 1
+            }));
+            
+            return this.loadScript(`${this.baseUrl}/search?data=${params}&key=${this.apiKey}`);
         }
 
         async getProfileCredits(profileId, offset = 0, limit = 10) {
-            const response = await fetch(`${this.baseUrl}/profile/${profileId}/credits?offset=${offset}&limit=${limit}`, {
-                method: 'GET',
-                headers: this.headers
-            });
-            return response.json();
+            return this.loadScript(
+                `${this.baseUrl}/profile/${profileId}/credits?offset=${offset}&limit=${limit}&key=${this.apiKey}`
+            );
         }
     }
 
-    class MusoWidgetLoader {
-        static init() {
-            if (window.MusoWidgetInitialized) return;
-            window.MusoWidgetInitialized = true;
-
-            this.setupStyles();
-            this.setupEmbeds();
-            this.observe();
-        }
-
-        static setupStyles() {
-            if (document.querySelector('style[data-muso-widget="true"]')) return;
-            
-            const styles = document.createElement("style");
-            styles.setAttribute("data-muso-widget", "true");
-            styles.textContent = `
+    const createMusoTrackList = () => {
+        const styles = `
+            <style>
                 .muso-track-list {
                     background: #000;
                     color: #fff;
@@ -107,137 +101,100 @@
                     opacity: 0.5;
                     cursor: not-allowed;
                 }
-                .muso-spinner {
-                    display: inline-block;
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid rgba(255,255,255,0.3);
-                    border-radius: 50%;
-                    border-top-color: #fff;
-                    animation: muso-spin 1s ease-in-out infinite;
-                    margin: 20px auto;
-                }
-                @keyframes muso-spin {
-                    to { transform: rotate(360deg); }
-                }
-                .muso-error {
-                    color: #ff4444;
-                    text-align: center;
-                    padding: 20px;
-                }
-            `;
-            document.head.appendChild(styles);
-        }
+            </style>
+        `;
 
-        static observe() {
-            const observer = new MutationObserver((mutations) => {
-                const widgets = document.querySelectorAll('.muso-credits-embed');
-                this.setupEmbeds(widgets);
-            });
-            
-            observer.observe(document, {
-                childList: true,
-                subtree: true
-            });
-        }
+        // Create container
+        const container = document.createElement('div');
+        container.className = 'muso-track-list';
+        container.innerHTML = styles + '<h2 class="muso-title">Songs written by PooBear</h2>';
 
-        static setupEmbeds(widgets = document.querySelectorAll('.muso-credits-embed')) {
-            widgets.forEach(widget => {
-                if (widget.getAttribute('data-initialized') === 'true') return;
-                this.buildWidget(widget);
-            });
-        }
+        let currentOffset = 0;
+        const itemsPerPage = 10;
+        let totalItems = 0;
 
-        static async buildWidget(container) {
-            container.setAttribute('data-initialized', 'true');
-            
-            let currentOffset = 0;
-            const itemsPerPage = 10;
-            const artistName = container.getAttribute('data-artist') || 'Poo Bear';
-            const muso = new MusoAPI();
+        // Function to format stream count
+        const formatStreams = (streams) => {
+            return new Intl.NumberFormat().format(streams);
+        };
 
-            container.innerHTML = `
-                <div class="muso-track-list">
-                    <h2 class="muso-title">Songs written by ${artistName}</h2>
-                    <div class="muso-tracks"></div>
-                    <div class="muso-spinner"></div>
+        // Function to add a track to the list
+        const addTrack = (track) => {
+            console.log('Adding track:', track);
+            const trackElement = document.createElement('div');
+            trackElement.className = 'muso-track';
+            trackElement.innerHTML = `
+                <div class="muso-track-info">
+                    <img class="muso-track-image" src="${track.image}" alt="${track.title}">
+                    <div class="muso-track-details">
+                        <h3>${track.title}</h3>
+                        <p>${track.artist}</p>
+                    </div>
                 </div>
             `;
+            container.appendChild(trackElement);
+        };
 
-            const tracksContainer = container.querySelector('.muso-tracks');
-            const spinner = container.querySelector('.muso-spinner');
+        const addShowMoreButton = () => {
+            const existingButton = container.querySelector('.show-more');
+            if (existingButton) {
+                existingButton.remove();
+            }
 
-            const addTrack = (track) => {
-                const trackElement = document.createElement('div');
-                trackElement.className = 'muso-track';
-                trackElement.innerHTML = `
-                    <div class="muso-track-info">
-                        <img class="muso-track-image" src="${track.image_url || track.album?.image_url || 'https://via.placeholder.com/50'}" alt="${track.title}">
-                        <div class="muso-track-details">
-                            <h3>${track.title}</h3>
-                            <p>${track.artists?.[0]?.name || 'Various Artists'}</p>
-                        </div>
-                    </div>
-                    <div class="muso-streams">${new Intl.NumberFormat().format(track.streams || 0)}</div>
-                `;
-                tracksContainer.appendChild(trackElement);
-            };
+            if (currentOffset < totalItems) {
+                const button = document.createElement('button');
+                button.className = 'show-more';
+                button.textContent = 'Show 10 More';
+                button.onclick = () => fetchTracks(currentOffset);
+                container.appendChild(button);
+            }
+        };
 
-            const showError = (message) => {
-                spinner.style.display = 'none';
-                const error = document.createElement('div');
-                error.className = 'muso-error';
-                error.textContent = message;
-                container.querySelector('.muso-track-list').appendChild(error);
-            };
-
-            const addShowMoreButton = (totalItems) => {
-                spinner.style.display = 'none';
-                if (currentOffset < totalItems) {
-                    const button = document.createElement('button');
-                    button.className = 'show-more';
-                    button.textContent = 'Show 10 More';
-                    button.onclick = () => loadTracks(currentOffset);
-                    container.querySelector('.muso-track-list').appendChild(button);
-                }
-            };
-
-            const loadTracks = async (offset) => {
-                try {
-                    const profileResults = await muso.search(artistName, "profile");
+        const fetchTracks = async (offset = 0) => {
+            const muso = new MusoAPI();
+            
+            try {
+                const profileResults = await muso.search("Poo Bear", "profile");
+                
+                if (profileResults?.result === 'ok') {
+                    const profileId = profileResults.data.profiles.items[0].id;
+                    const creditsResult = await muso.getProfileCredits(profileId, offset, itemsPerPage);
                     
-                    if (profileResults?.result === 'ok') {
-                        const profileId = profileResults.data.profiles.items[0].id;
-                        const creditsResult = await muso.getProfileCredits(profileId, offset, itemsPerPage);
+                    if (creditsResult?.result === 'ok' && creditsResult.data.items) {
+                        totalItems = creditsResult.data.totalCount;
                         
-                        if (creditsResult?.result === 'ok' && creditsResult.data.items) {
-                            creditsResult.data.items.forEach(item => {
-                                addTrack(item.track);
+                        creditsResult.data.items.forEach(item => {
+                            addTrack({
+                                title: item.track.title,
+                                artist: item.artists[0]?.name || 'Various Artists',
+                                image: item.album.albumArt || 'https://via.placeholder.com/50',
+                                streams: item.track.popularity * 1000000
                             });
+                        });
 
-                            currentOffset += creditsResult.data.items.length;
-                            
-                            const existingButton = container.querySelector('.show-more');
-                            if (existingButton) existingButton.remove();
-                            
-                            addShowMoreButton(creditsResult.data.totalCount);
-                        } else {
-                            showError('No tracks found');
-                        }
-                    } else {
-                        showError('Artist not found');
+                        currentOffset += creditsResult.data.items.length;
+                        addShowMoreButton();
                     }
-                } catch (error) {
-                    console.error('Error loading tracks:', error);
-                    showError('Error loading tracks');
                 }
-            };
+            } catch (error) {
+                console.error('Error fetching tracks:', error);
+                container.innerHTML += '<div style="color: red;">Error loading tracks</div>';
+            }
+        };
 
-            // Initial load
-            loadTracks(0);
+        // Initialize
+        fetchTracks();
+        return container;
+    };
+
+    // Add to page when DOM is loaded
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('DOM loaded, initializing Muso track list...');
+        const embedContainer = document.getElementById('muso-embed');
+        if (embedContainer) {
+            embedContainer.appendChild(createMusoTrackList());
+        } else {
+            console.error('Could not find muso-embed container');
         }
-    }
-
-    // Initialize the widget
-    MusoWidgetLoader.init();
+    });
 }(); 
